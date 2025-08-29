@@ -1,0 +1,1251 @@
+<!DOCTYPE html>
+<html lang="en" class="h-full">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Iterable Sales Territory Rebalancer</title>
+
+  <script>
+    window.tailwind = { config: { darkMode: 'class' } };
+  </script>
+  <script src="https://cdn.tailwindcss.com"></script>
+
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.19.3/dist/xlsx.full.min.js"></script>
+
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root { color-scheme: light dark; }
+    body { font-family: 'Inter', sans-serif; }
+    header { background: linear-gradient(90deg, #4f46e5, #6366f1); color: white; }
+    .app-title { font-size: 1.25rem; font-weight: 700; }
+    .card { background: white; border-radius: 1rem; box-shadow: 0 4px 12px rgba(0,0,0,0.05); }
+    .dark .card { background: #0f172a; box-shadow: 0 4px 12px rgba(0,0,0,0.3); }
+    .skeleton { position: relative; overflow: hidden; background: #e5e7eb; }
+    .skeleton::after { content:""; position:absolute; inset:0; transform:translateX(-100%);
+      background: linear-gradient(90deg, transparent, rgba(255,255,255,.4), transparent);
+      animation: shimmer 1.2s infinite; }
+    @keyframes shimmer { 100% { transform: translateX(100%); } }
+    .toast { position: fixed; right: 1rem; bottom: 1rem; z-index: 1000; }
+    .kbd{ font-family: ui-monospace, Menlo, Consolas, monospace; background:#f3f4f6; border:1px solid #e5e7eb; border-bottom-width:2px; padding:0 .35rem; border-radius:.375rem; }
+    .dark .kbd{ background:#1f2937; border-color:#374151; }
+    /* Chat styles */
+    .chat-bubble { max-width: 85%; padding: 0.5rem 1rem; border-radius: 1rem; }
+    .user-bubble { background: #eef2ff; color: #312e81; border-bottom-right-radius: 0.25rem; align-self: flex-end; }
+    .dark .user-bubble { background: #312e81; color: #e0e7ff; }
+    .model-bubble { background: #f3f4f6; color: #1f2937; border-bottom-left-radius: 0.25rem; align-self: flex-start; }
+    .dark .model-bubble { background: #1e293b; color: #cbd5e1; }
+  </style>
+</head>
+
+<body class="min-h-screen flex flex-col bg-gray-50 dark:bg-slate-900 text-slate-900 dark:text-slate-100">
+  <header class="w-full py-4 px-4 md:px-6 flex items-center justify-between shadow-md">
+    <div class="flex items-center gap-3">
+      <img src="https://seeklogo.com/images/I/iterable-logo-1F11DB2EBE-seeklogo.com.png" alt="Iterable Logo" class="h-8 w-auto">
+      <h1 class="app-title">Iterable Sales Territory Rebalancer</h1>
+    </div>
+    <div class="flex items-center gap-2">
+      <button id="helpBtn" title="Help (?)" class="bg-white/20 hover:bg-white/30 text-white font-medium py-2 px-3 rounded-lg flex items-center gap-1">
+        <span>Help</span><span class="hidden sm:inline">?</span>
+      </button>
+      <button id="themeToggle" class="bg-white/20 hover:bg-white/30 text-white font-medium py-2 px-3 rounded-lg" title="Toggle theme">🌙</button>
+      <button id="resetBtn" class="bg-white/20 hover:bg-white/30 text-white font-medium py-2 px-3 rounded-lg">Reset</button>
+      <button id="downloadSampleBtn" class="bg-white text-indigo-600 hover:bg-gray-100 font-medium py-2 px-3 rounded-lg">Sample CSV</button>
+    </div>
+  </header>
+
+  <main class="flex-1 container max-w-7xl mx-auto w-full p-4 md:p-6 space-y-6">
+    <div id="dropZone" class="card p-6 border-2 border-dashed border-gray-300 dark:border-slate-700">
+      <h2 class="text-lg md:text-xl font-semibold mb-3">Input Account Data</h2>
+      <p class="text-sm text-gray-600 dark:text-slate-300 mb-4">
+        Upload your Salesforce export or use the template. Region will be inferred unless your selection enforces East/West.
+      </p>
+
+      <div id="emptyState" class="flex flex-col items-center justify-center text-center py-6">
+        <svg width="160" height="90" viewBox="0 0 300 170" fill="none" class="opacity-80 mb-3">
+          <rect x="20" y="30" width="260" height="110" rx="12" fill="#EEF2FF"/>
+          <rect x="35" y="45" width="230" height="18" rx="4" fill="#C7D2FE"/>
+          <rect x="35" y="70" width="180" height="12" rx="4" fill="#E0E7FF"/>
+          <rect x="35" y="90" width="200" height="12" rx="4" fill="#E0E7FF"/>
+          <rect x="35" y="110" width="150" height="12" rx="4" fill="#E0E7FF"/>
+        </svg>
+        <p class="text-gray-600 dark:text-slate-300">Drop a CSV here or click to upload</p>
+      </div>
+
+      <div class="mt-2 text-center">
+        <label for="csvFile" class="cursor-pointer bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-2 px-6 rounded-md shadow">Click to Upload</label>
+        <input type="file" id="csvFile" accept=".csv" class="hidden" aria-label="Upload CSV">
+        <p id="fileName" class="text-sm text-gray-500 mt-2"></p>
+      </div>
+      <div id="missingHeaders" class="hidden mt-4 p-3 rounded-md border border-yellow-300 bg-yellow-50 text-yellow-800 text-sm dark:bg-yellow-900/40 dark:border-yellow-800"></div>
+    </div>
+
+    <div class="card p-6">
+      <h2 class="text-lg md:text-xl font-semibold mb-4">Segment Configuration</h2>
+      <div class="grid md:grid-cols-2 gap-6" id="segmentOptions">
+        <div>
+          <h3 class="text-sm font-semibold text-gray-700 dark:text-slate-300 mb-2">Enterprise (Left)</h3>
+          <div class="space-y-2">
+            <label class="flex items-center gap-3">
+              <input type="radio" name="segmentOption" value="enterpriseAll" class="form-radio text-indigo-600">
+              <span>All accounts are 'Enterprise'</span>
+            </label>
+            <label class="flex items-center gap-3">
+              <input type="radio" name="segmentOption" value="enterpriseEast" class="form-radio text-indigo-600">
+              <span>All accounts are 'Enterprise East'</span>
+            </label>
+            <label class="flex items-center gap-3">
+              <input type="radio" name="segmentOption" value="enterpriseWest" class="form-radio text-indigo-600">
+              <span>All accounts are 'Enterprise West'</span>
+            </label>
+          </div>
+        </div>
+
+        <div>
+          <h3 class="text-sm font-semibold text-gray-700 dark:text-slate-300 mb-2">Mid-Market (Right)</h3>
+          <div class="space-y-2">
+            <label class="flex items-center gap-3">
+              <input type="radio" name="segmentOption" value="mmAll" class="form-radio text-indigo-600" checked>
+              <span>All accounts are 'Mid-Market' <span class="text-gray-500 dark:text-slate-400">(includes all East & West MM)</span></span>
+            </label>
+            <label class="flex items-center gap-3">
+              <input type="radio" name="segmentOption" value="mmEast" class="form-radio text-indigo-600">
+              <span>All accounts are 'Mid-Market East' <span class="text-gray-500 dark:text-slate-400">(all East MM territories)</span></span>
+            </label>
+            <label class="flex items-center gap-3">
+              <input type="radio" name="segmentOption" value="mmWest" class="form-radio text-indigo-600">
+              <span>All accounts are 'Mid-Market West' <span class="text-gray-500 dark:text-slate-400">(all West MM territories)</span></span>
+            </label>
+
+            <div class="pt-2 border-t border-gray-200 dark:border-slate-700"></div>
+
+            <label class="flex items-center gap-3">
+              <input type="radio" name="segmentOption" value="mmUpperEast" class="form-radio text-indigo-600">
+              <span>All accounts are 'Upper Mid-Market East (1-4)'</span>
+            </label>
+            <label class="flex items-center gap-3">
+              <input type="radio" name="segmentOption" value="mmUpperWest" class="form-radio text-indigo-600">
+              <span>All accounts are 'Upper Mid-Market West (1-4)'</span>
+            </label>
+            <label class="flex items-center gap-3">
+              <input type="radio" name="segmentOption" value="mmLowerEast" class="form-radio text-indigo-600">
+              <span>All accounts are 'Lower Mid-Market East (5-6)'</span>
+            </label>
+            <label class="flex items-center gap-3">
+              <input type="radio" name="segmentOption" value="mmLowerWest" class="form-radio text-indigo-600">
+              <span>All accounts are 'Lower Mid-Market West (5-6)'</span>
+            </label>
+          </div>
+        </div>
+      </div>
+      <p class="text-xs text-gray-500 dark:text-slate-400 mt-3">
+        Your selection determines the exact set of territory names used for assignment. East/West options enforce Region.
+      </p>
+    </div>
+
+    <div class="card p-6">
+      <h2 class="text-lg md:text-xl font-semibold mb-3">Scenario Simulation (Weights)</h2>
+      <p class="text-sm text-gray-600 dark:text-slate-300 mb-4">Tune how the balancer distributes load across territories.</p>
+      <div class="grid md:grid-cols-2 gap-6">
+        <div>
+          <label class="text-sm font-medium">Weight: Account Count</label>
+          <input type="range" id="wCount" min="0" max="1" step="0.05" value="1" class="w-full">
+          <div class="text-xs text-gray-500 dark:text-slate-400"><span id="wCountVal">1.00</span></div>
+        </div>
+        <div>
+          <label class="text-sm font-medium">Weight: PDS</label>
+          <input type="range" id="wPds" min="0" max="1" step="0.05" value="0" class="w-full">
+          <div class="text-xs text-gray-500 dark:text-slate-400"><span id="wPdsVal">0.00</span></div>
+        </div>
+        <div>
+          <label class="text-sm font-medium">Weight: Revenue</label>
+          <input type="range" id="wRev" min="0" max="1" step="0.05" value="0" class="w-full">
+          <div class="text-xs text-gray-500 dark:text-slate-400"><span id="wRevVal">0.00</span></div>
+        </div>
+        <div>
+          <label class="text-sm font-medium">Weight: Intent</label>
+          <input type="range" id="wIntent" min="0" max="1" step="0.05" value="0" class="w-full">
+          <div class="text-xs text-gray-500 dark:text-slate-400"><span id="wIntentVal">0.00</span></div>
+        </div>
+      </div>
+      <p class="text-xs text-gray-500 dark:text-slate-400 mt-3">Tip: Start with Count-only. Then add small PDS/Revenue/Intent weights (0.15–0.35) to shift load.</p>
+    </div>
+
+    <div class="text-center">
+      <button id="rebalanceBtn" class="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 px-8 rounded-lg transition-colors disabled:opacity-50 shadow-md" disabled>
+        Rebalance Accounts
+      </button>
+    </div>
+
+    <div id="loadingIndicator" class="hidden items-center justify-center gap-2 text-indigo-600 font-semibold">
+      <div class="loading-spinner border-4 border-gray-200 border-t-indigo-600 rounded-full w-6 h-6 animate-spin"></div> Rebalancing...
+    </div>
+    <div id="messageBox" class="hidden p-4 rounded-md"></div>
+
+    <div id="resultsContainer" class="hidden space-y-6">
+      <div class="card p-6">
+        <h2 class="text-lg md:text-xl font-semibold mb-4">Rebalance Summary</h2>
+        <div id="summarySkeleton" class="grid grid-cols-3 gap-4" style="display:none;">
+          <div class="h-16 rounded-lg skeleton"></div>
+          <div class="h-16 rounded-lg skeleton"></div>
+          <div class="h-16 rounded-lg skeleton"></div>
+        </div>
+        <div id="overviewMetrics" class="grid grid-cols-3 gap-4 text-center">
+          <div class="p-4 bg-indigo-50 dark:bg-indigo-900/30 rounded-lg">
+            <p class="text-gray-600 dark:text-slate-300">Total Accounts</p>
+            <p id="totalAccountsCount" class="text-2xl font-bold text-indigo-700 dark:text-indigo-300"></p>
+          </div>
+          <div class="p-4 bg-green-50 dark:bg-emerald-900/30 rounded-lg">
+            <p class="text-gray-600 dark:text-slate-300">Reassigned</p>
+            <p id="reassignedAccountsCount" class="text-2xl font-bold text-green-700 dark:text-emerald-300"></p>
+          </div>
+          <div class="p-4 bg-yellow-50 dark:bg-amber-900/30 rounded-lg">
+            <p class="text-gray-600 dark:text-slate-300">% Reassigned</p>
+            <p id="percentageReassigned" class="text-2xl font-bold text-yellow-700 dark:text-amber-300"></p>
+          </div>
+        </div>
+        <div class="flex flex-wrap items-center justify-center gap-2 mt-6">
+          <button id="downloadRebalancedCsvBtn" class="bg-emerald-600 hover:bg-emerald-700 text-white font-semibold py-2 px-4 rounded-lg">Download CSV</button>
+          <button id="downloadRebalancedXlsxBtn" class="bg-emerald-600/90 hover:bg-emerald-700 text-white font-semibold py-2 px-4 rounded-lg">Download XLSX</button>
+        </div>
+      </div>
+
+      <div class="card p-6">
+        <div class="flex items-center justify-between mb-3">
+          <h2 class="text-lg md:text-xl font-semibold">Data Visualization</h2>
+          <button id="downloadChartBtn" class="bg-white border border-gray-200 dark:border-slate-700 hover:bg-gray-50 dark:hover:bg-slate-800 text-sm px-3 py-1.5 rounded-lg">Download Chart PNG</button>
+        </div>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+          <select id="territoryChartSelect" class="w-full p-2 border border-gray-300 rounded-md dark:bg-slate-800 dark:border-slate-700"></select>
+          <select id="chartTypeSelect" class="w-full p-2 border border-gray-300 rounded-md dark:bg-slate-800 dark:border-slate-700">
+            <option value="accountsPerTerritory">Account Count per Territory</option>
+            <option value="avgPdsPerTerritory">Average PDS per Territory</option>
+            <option value="accountsByRegion">Account Distribution by Region</option>
+            <option value="accountsBySegment">Account Distribution by Segment</option>
+            <option value="priorityDistribution">Priority Distribution</option>
+            <option value="industryDistribution">Top 10 Industries Distribution</option>
+            <option value="pdsBySegment">Total PDS by Segment</option>
+          </select>
+        </div>
+        <div class="bg-gray-50 dark:bg-slate-800 p-4 rounded-lg shadow-inner">
+          <canvas id="myChart" height="140"></canvas>
+        </div>
+      </div>
+
+      <div class="card p-6">
+        <h3 class="text-lg font-semibold mb-2">Territory Details (Previous vs. New Balance)</h3>
+        <div class="overflow-x-auto rounded-lg border border-gray-200 dark:border-slate-700">
+          <table class="min-w-full divide-y divide-gray-200 dark:divide-slate-700">
+            <thead class="bg-gray-100 dark:bg-slate-800/60">
+              <tr>
+                <th class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider">Territory</th>
+                <th class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider">Accounts (Prev/New)</th>
+                <th class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider">Priorities (New)</th>
+                <th class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider">Industries (New)</th>
+                <th class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider">States (New)</th>
+                <th class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider">Avg PDS (Prev/New)</th>
+                <th class="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider">Avg Intent (New)</th>
+              </tr>
+            </thead>
+            <tbody id="territoryDetailsBody" class="bg-white dark:bg-slate-900 divide-y divide-gray-200 dark:divide-slate-800"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="card p-6">
+        <h2 class="text-lg md:text-xl font-semibold mb-4">✨ Territory Strategic Insights ✨</h2>
+        <div class="space-y-4">
+          <div>
+            <p class="text-sm font-medium mb-2">Select Insight Type:</p>
+            <div class="flex flex-wrap gap-4" id="insightTypeContainer">
+              <label class="flex items-center gap-2"><input type="radio" name="insightType" value="new" checked class="form-radio text-indigo-600"><span>Newly Rebalanced</span></label>
+              <label class="flex items-center gap-2"><input type="radio" name="insightType" value="current" class="form-radio text-indigo-600"><span>Previous Balance</span></label>
+            </div>
+          </div>
+          <div>
+            <label for="insightsTerritorySelect" class="text-sm font-medium">Select Territory:</label>
+            <select id="insightsTerritorySelect" class="w-full p-2 border border-gray-300 rounded-md mt-1 dark:bg-slate-800 dark:border-slate-700"></select>
+          </div>
+          <div class="text-center">
+            <button id="generateInsightsBtn" class="bg-yellow-400 hover:bg-yellow-500 text-yellow-900 dark:text-yellow-100 font-bold py-2 px-6 rounded-lg shadow disabled:opacity-50" disabled>
+              Generate Strategic Plan
+            </button>
+          </div>
+          <div id="insightsLoading" class="hidden flex items-center justify-center gap-2 font-semibold mt-4 text-yellow-800 dark:text-yellow-200">
+            <div class="loading-spinner" style="border:4px solid #fde68a;border-top-color:#f59e0b;border-radius:50%;width:24px;height:24px;animation:spin 1s linear infinite;"></div> Generating strategic insights...
+          </div>
+          <div id="insightsDisplay" class="hidden prose prose-slate dark:prose-invert max-w-none mt-4 p-4 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-md"></div>
+        </div>
+      </div>
+      
+      <div class="card p-6">
+        <h2 class="text-lg md:text-xl font-semibold mb-4">💬 Ask Gemini</h2>
+        <div id="chatContainer" class="flex flex-col space-y-4">
+          <div id="chatDisplay" class="h-64 overflow-y-auto p-4 bg-gray-50 dark:bg-slate-800 rounded-lg flex flex-col gap-4">
+            <div class="model-bubble prose prose-sm dark:prose-invert max-w-none">
+              Hello! I'm ready to help. You can ask me about the territory data you've processed or anything else.
+            </div>
+          </div>
+          <div id="chatInputContainer" class="flex items-center gap-2">
+            <input type="text" id="chatInput" placeholder="Ask a follow-up question..." class="flex-grow p-2 border border-gray-300 rounded-md dark:bg-slate-800 dark:border-slate-700 focus:ring-2 focus:ring-indigo-500 focus:outline-none">
+            <button id="chatSendBtn" class="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-2 px-4 rounded-lg">Send</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="card p-6">
+        <h2 class="text-lg md:text-xl font-semibold mb-4">Run History</h2>
+        <div class="flex flex-wrap gap-3 items-center">
+          <select id="runHistorySelect" class="p-2 border border-gray-300 rounded-md dark:bg-slate-800 dark:border-slate-700"></select>
+          <button id="loadRunBtn" class="bg-white border border-gray-200 dark:border-slate-700 hover:bg-gray-50 dark:hover:bg-slate-800 px-3 py-1.5 rounded">Load</button>
+          <button id="compareRunBtn" class="bg-white border border-gray-200 dark:border-slate-700 hover:bg-gray-50 dark:hover:bg-slate-800 px-3 py-1.5 rounded">Compare to Current</button>
+          <span id="compareResult" class="text-sm text-gray-600 dark:text-slate-300"></span>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <footer class="py-6 text-center text-xs text-gray-500 dark:text-slate-400">
+    © Iterable – Internal Tooling • Press <span class="kbd">?</span> for help
+  </footer>
+
+  <div id="toastContainer" class="toast space-y-2"></div>
+
+  <div id="helpModal" class="fixed inset-0 bg-black/50 hidden items-center justify-center z-50">
+    <div class="card w-[min(800px,92vw)] p-6">
+      <div class="flex items-center justify-between mb-3">
+        <h3 class="text-lg font-semibold">Help & Glossary</h3>
+        <button id="closeHelpBtn" class="px-3 py-1.5 rounded bg-gray-100 hover:bg-gray-200 dark:bg-slate-800 dark:hover:bg-slate-700">Close</button>
+      </div>
+      <div class="space-y-3 text-sm">
+        <p><strong>Workflow:</strong> Upload CSV → Choose Segment Config → Tune Weights → Rebalance → Review → Export.</p>
+        <ul class="list-disc ml-5">
+          <li><strong>PDS</strong>: Pipeline/Deal Size proxy used for balancing.</li>
+          <li><strong>Intent Score</strong>: 6sense-like score indicating buying intent.</li>
+          <li><strong>Scenario Weights</strong>: Shift balancing toward accounts with higher PDS/Revenue/Intent.</li>
+          <li><strong>Run History</strong>: Saves summaries locally so you can compare distributions.</li>
+          <li><strong>Security</strong>: The API key is hardcoded in the script. Ensure this file is handled securely.</li>
+        </ul>
+        <p class="text-xs text-gray-500 dark:text-slate-400">CSV Columns required: Account Name, Territory, Iterable Sector, ZI Billing State, PDS Live, ZI Revenue, 6sense Account Intent Score, ZI Marketing Budget, Z - Emails/Month - eDS API (MM), Account ID, Priority.</p>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // ---------- THE APP ----------
+    class TerritoryRebalancer {
+      constructor(){
+        // Theme init
+        this._initTheme();
+        
+        // !!! IMPORTANT !!!
+        // PASTE YOUR GOOGLE GEMINI API KEY HERE
+        this.API_KEY = 'AIzaSyAWUFadZQtLwbGy1AUjJvXgHuEi2WBwxkM';
+
+        // Chart palette (Iterable-ish)
+        this.palette = ['#5C6AC4','#9C27B0','#2196F3','#009688','#FF9800','#F44336','#607D8B','#7C4DFF','#26A69A','#42A5F5','#8E24AA'];
+        this.chartInstance = null;
+        this.chatHistory = [{ role: 'model', parts: [{ text: "Hello! I'm ready to help. You can ask me about the territory data you've processed or anything else." }] }];
+
+        this.config = {
+          enterpriseTerritories:{
+            East: Array.from({length:5},(_,i)=>`NOAM Enterprise East ${i+1}`),
+            West: Array.from({length:5},(_,i)=>`NOAM Enterprise West ${i+1}`),
+          },
+          midMarketTerritories:{
+            East: Array.from({length:6},(_,i)=>`NOAM Mid-Market East ${i+1}`),
+            West: Array.from({length:6},(_,i)=>`NOAM Mid-Market West ${i+1}`),
+          },
+          constrainedStates:{ West:['CA','TX'], East:['NY','FL','TN','KY','LA'] },
+          swingStates:['MN','WI','IA','IL','MO','AR','MS'],
+          sfColumnMap:{
+            'Account Name': 'Account Name',
+            'Territory':'Current Territory',
+            'Iterable Sector':'Industry',
+            'ZI Billing State':'State',
+            'PDS Live':'PDS',
+            'ZI Revenue':'Revenue',
+            '6sense Account Intent Score':'Intent Score',
+            'ZI Marketing Budget':'Marketing Budget',
+            'Z - Emails/Month - eDS API (MM)':'Email Volume'
+          },
+          requiredExtras:['Account ID','Priority']
+        };
+
+        this.weights = { count:1, pds:0, rev:0, intent:0 };
+
+        this.originalAccounts = [];
+        this.rebalancedAccounts = [];
+
+        this.ui = {
+          themeToggle: document.getElementById('themeToggle'),
+          helpBtn: document.getElementById('helpBtn'),
+          helpModal: document.getElementById('helpModal'),
+          closeHelpBtn: document.getElementById('closeHelpBtn'),
+          csvFile: document.getElementById('csvFile'),
+          dropZone: document.getElementById('dropZone'),
+          emptyState: document.getElementById('emptyState'),
+          fileName: document.getElementById('fileName'),
+          rebalanceBtn: document.getElementById('rebalanceBtn'),
+          loadingIndicator: document.getElementById('loadingIndicator'),
+          messageBox: document.getElementById('messageBox'),
+          resultsContainer: document.getElementById('resultsContainer'),
+          totalAccountsCount: document.getElementById('totalAccountsCount'),
+          reassignedAccountsCount: document.getElementById('reassignedAccountsCount'),
+          percentageReassigned: document.getElementById('percentageReassigned'),
+          territoryDetailsBody: document.getElementById('territoryDetailsBody'),
+          downloadRebalancedCsvBtn: document.getElementById('downloadRebalancedCsvBtn'),
+          downloadRebalancedXlsxBtn: document.getElementById('downloadRebalancedXlsxBtn'),
+          territoryChartSelect: document.getElementById('territoryChartSelect'),
+          chartTypeSelect: document.getElementById('chartTypeSelect'),
+          chartCanvas: document.getElementById('myChart'),
+          downloadChartBtn: document.getElementById('downloadChartBtn'),
+          insightTypeContainer: document.getElementById('insightTypeContainer'),
+          insightsTerritorySelect: document.getElementById('insightsTerritorySelect'),
+          generateInsightsBtn: document.getElementById('generateInsightsBtn'),
+          insightsLoading: document.getElementById('insightsLoading'),
+          insightsDisplay: document.getElementById('insightsDisplay'),
+          missingHeaders: document.getElementById('missingHeaders'),
+          resetBtn: document.getElementById('resetBtn'),
+          downloadSampleBtn: document.getElementById('downloadSampleBtn'),
+          // Chat UI
+          chatDisplay: document.getElementById('chatDisplay'),
+          chatInput: document.getElementById('chatInput'),
+          chatSendBtn: document.getElementById('chatSendBtn'),
+          // weights
+          wCount: document.getElementById('wCount'), wPds: document.getElementById('wPds'),
+          wRev: document.getElementById('wRev'), wIntent: document.getElementById('wIntent'),
+          wCountVal: document.getElementById('wCountVal'), wPdsVal: document.getElementById('wPdsVal'),
+          wRevVal: document.getElementById('wRevVal'), wIntentVal: document.getElementById('wIntentVal'),
+          // run history
+          runHistorySelect: document.getElementById('runHistorySelect'),
+          loadRunBtn: document.getElementById('loadRunBtn'),
+          compareRunBtn: document.getElementById('compareRunBtn'),
+          compareResult: document.getElementById('compareResult'),
+          summarySkeleton: document.getElementById('summarySkeleton'),
+        };
+
+        this._bindEvents();
+        this._loadRunHistory();
+      }
+
+      // ---------- Events ----------
+      _bindEvents(){
+        // Theme & Help
+        this.ui.themeToggle.addEventListener('click', ()=> this._toggleTheme());
+        this.ui.helpBtn.addEventListener('click', ()=> this._openHelp());
+        this.ui.closeHelpBtn.addEventListener('click', ()=> this._closeHelp());
+        window.addEventListener('keydown', (e)=>{ if(e.key === '?') this._openHelp(); });
+
+        // Weights
+        ['wCount','wPds','wRev','wIntent'].forEach(id=>{
+          const el = this.ui[id];
+          const valEl = this.ui[id+'Val'];
+          el.addEventListener('input', ()=>{
+            valEl.textContent = Number(el.value).toFixed(2);
+            this.weights = {
+              count: Number(this.ui.wCount.value),
+              pds: Number(this.ui.wPds.value),
+              rev: Number(this.ui.wRev.value),
+              intent: Number(this.ui.wIntent.value),
+            };
+          });
+        });
+
+        // File
+        this.ui.csvFile.addEventListener('change', ()=> this._handleFileSelect(this.ui.csvFile.files));
+        const dropZone = this.ui.dropZone;
+        dropZone.addEventListener('dragover', (e)=>{ e.preventDefault(); dropZone.classList.add('ring','ring-indigo-300'); });
+        dropZone.addEventListener('dragleave', (e)=>{ e.preventDefault(); dropZone.classList.remove('ring','ring-indigo-300'); });
+        dropZone.addEventListener('drop', (e)=>{
+          e.preventDefault(); dropZone.classList.remove('ring','ring-indigo-300');
+          if (e.dataTransfer.files?.length){ this._handleFileSelect(e.dataTransfer.files); }
+        });
+
+        // Actions
+        this.ui.rebalanceBtn.addEventListener('click', ()=> this._handleRebalance());
+        this.ui.downloadRebalancedCsvBtn.addEventListener('click', ()=> this._downloadCSV());
+        this.ui.downloadRebalancedXlsxBtn.addEventListener('click', ()=> this._downloadXLSX());
+        this.ui.territoryChartSelect.addEventListener('change', ()=> this._renderChart());
+        this.ui.chartTypeSelect.addEventListener('change', ()=> this._renderChart());
+        this.ui.downloadChartBtn.addEventListener('click', ()=> this._downloadChartPng());
+        this.ui.insightTypeContainer.addEventListener('change', ()=> this._handleInsightTypeChange());
+        this.ui.insightsTerritorySelect.addEventListener('change', ()=> this.ui.generateInsightsBtn.disabled = !this.ui.insightsTerritorySelect.value);
+        this.ui.generateInsightsBtn.addEventListener('click', ()=> this._handleGenerateInsights());
+        this.ui.resetBtn.addEventListener('click', ()=> this._resetApp());
+        this.ui.downloadSampleBtn.addEventListener('click', ()=> this._downloadSampleCsv());
+        // Chat Actions
+        this.ui.chatSendBtn.addEventListener('click', () => this._handleChatSubmit());
+        this.ui.chatInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') this._handleChatSubmit(); });
+        // History
+        this.ui.loadRunBtn.addEventListener('click', ()=> this._loadSelectedRun());
+        this.ui.compareRunBtn.addEventListener('click', ()=> this._compareSelectedRun());
+      }
+
+      // ---------- Theme & Help ----------
+      _initTheme(){
+        const saved = localStorage.getItem('revops_theme');
+        const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+        const isDark = saved ? saved === 'dark' : prefersDark;
+        document.documentElement.classList.toggle('dark', isDark);
+      }
+      _toggleTheme(){
+        const isDark = document.documentElement.classList.toggle('dark');
+        localStorage.setItem('revops_theme', isDark ? 'dark' : 'light');
+        this._renderChart(true);
+      }
+      _openHelp(){ this.ui.helpModal.classList.remove('hidden'); this.ui.helpModal.classList.add('flex'); }
+      _closeHelp(){ this.ui.helpModal.classList.add('hidden'); this.ui.helpModal.classList.remove('flex'); }
+
+      // ---------- File Handling ----------
+      _handleFileSelect(files){
+        if (!files || !files.length) return;
+        const file = files[0];
+        if (file.size > 50 * 1024 * 1024) { this._toast('File too large. Please keep CSV ≤ 50MB.', 'error'); return; }
+        this.ui.csvFile.files = files;
+        this.ui.fileName.textContent = file.name;
+        this.ui.rebalanceBtn.disabled = false;
+        this.ui.emptyState.classList.add('hidden');
+      }
+
+      // ---------- Selection Resolver ----------
+      _resolveTerritorySelection(option) {
+        const ENT_E = this.config.enterpriseTerritories.East;
+        const ENT_W = this.config.enterpriseTerritories.West;
+        const MM_E = this.config.midMarketTerritories.East;
+        const MM_W = this.config.midMarketTerritories.West;
+        switch(option){
+          case 'enterpriseAll': return { segment:'Enterprise', forceRegion:null, territories:[...ENT_E, ...ENT_W] };
+          case 'enterpriseEast': return { segment:'Enterprise', forceRegion:'East', territories:[...ENT_E] };
+          case 'enterpriseWest': return { segment:'Enterprise', forceRegion:'West', territories:[...ENT_W] };
+          case 'mmAll':          return { segment:'Mid-Market', forceRegion:null, territories:[...MM_E, ...MM_W] };
+          case 'mmEast':         return { segment:'Mid-Market', forceRegion:'East', territories:[...MM_E] };
+          case 'mmWest':         return { segment:'Mid-Market', forceRegion:'West', territories:[...MM_W] };
+          case 'mmUpperEast':    return { segment:'Mid-Market', forceRegion:'East', territories:MM_E.slice(0,4) };
+          case 'mmUpperWest':    return { segment:'Mid-Market', forceRegion:'West', territories:MM_W.slice(0,4) };
+          case 'mmLowerEast':    return { segment:'Mid-Market', forceRegion:'East', territories:MM_E.slice(4,6) };
+          case 'mmLowerWest':    return { segment:'Mid-Market', forceRegion:'West', territories:MM_W.slice(4,6) };
+          default:               return { segment:'Mid-Market', forceRegion:null, territories:[...MM_E, ...MM_W] };
+        }
+      }
+
+      // ---------- Rebalance Flow ----------
+      async _handleRebalance(){
+        const file = this.ui.csvFile.files?.[0];
+        if (!file) { this._toast('Please select a CSV first.', 'error'); return; }
+        this._toggleLoading(true);
+        this._showSummarySkeleton(true);
+        this._hideMessage();
+        this.ui.resultsContainer.classList.add('hidden');
+        this.ui.missingHeaders.classList.add('hidden');
+
+        try {
+          // Parse with Papa (worker enabled)
+          const accounts = await new Promise((resolve, reject) => {
+            Papa.parse(file, {
+              header: true, skipEmptyLines: 'greedy', worker: true,
+              complete: (res)=> resolve(res.data),
+              error: (err)=> reject(err)
+            });
+          });
+
+          // Normalize state code uppercase
+          accounts.forEach(a => { if (a['ZI Billing State']) a['ZI Billing State'] = String(a['ZI Billing State']).trim().toUpperCase(); });
+
+          const segmentOption = document.querySelector('input[name="segmentOption"]:checked').value;
+          const hasRegionColumn = Object.keys(accounts[0] || {}).includes('Region');
+
+          const headerCheck = this._validateHeaders(accounts);
+          if (headerCheck.missing.length){
+            this._showMissingHeaders(headerCheck.missing, headerCheck.required);
+            throw new Error('Missing required columns. See details above.');
+          }
+
+          let mappedAccounts = this._mapColumns(accounts);
+          mappedAccounts.forEach(acc => {
+            acc.PDS = this._num(acc.PDS);
+            acc.Revenue = this._num(acc.Revenue);
+            acc['Intent Score'] = parseInt(acc['Intent Score'] || '0', 10) || 0;
+            acc['Marketing Budget'] = this._num(acc['Marketing Budget']);
+            acc['Email Volume'] = this._num(acc['Email Volume']) * 1_000_000; // millions -> absolute
+          });
+
+          this.originalAccounts = JSON.parse(JSON.stringify(mappedAccounts));
+          this.rebalancedAccounts = this._rebalanceAccounts(mappedAccounts, segmentOption, hasRegionColumn);
+
+          this._displayResults();
+          this._toast('Rebalancing successful!', 'success');
+          this._saveRunHistory(segmentOption);
+        } catch (err){
+          this._showMessage(err.message, 'error');
+          console.error(err);
+        } finally {
+          this._toggleLoading(false);
+          this._showSummarySkeleton(false);
+        }
+      }
+
+      _mapColumns(accounts){
+        return accounts.map(acc => {
+          const newAcc = {};
+          for (const key in acc){ newAcc[this.config.sfColumnMap[key] || key] = acc[key]; }
+          return newAcc;
+        });
+      }
+
+      _validateHeaders(accounts){
+        if (!accounts.length) throw new Error('CSV file is empty.');
+        const headers = Object.keys(accounts[0]);
+        const required = Object.keys(this.config.sfColumnMap).concat(this.config.requiredExtras);
+        const missing = required.filter(h => !headers.includes(h));
+        return {missing, required};
+      }
+
+      _normalizeFields(input, fields){
+        const mins = {}, maxs = {};
+        fields.forEach(f=>{ mins[f]=Infinity; maxs[f]=-Infinity; });
+        input.forEach(a=>{
+          fields.forEach(f=>{
+            const v = Number(a[f]||0);
+            if (v < mins[f]) mins[f]=v;
+            if (v > maxs[f]) maxs[f]=v;
+          });
+        });
+        return (a,f)=>{
+          const v = Number(a[f]||0);
+          if (!isFinite(v)) return 0;
+          const min = mins[f], max = maxs[f];
+          return (max>min) ? (v-min)/(max-min) : 0;
+        };
+      }
+
+      _rebalanceAccounts(accounts, segmentOption, hasRegionColumn){
+        const sel = this._resolveTerritorySelection(segmentOption);
+        if (!sel.territories.length) throw new Error('No territories available for this selection.');
+
+        // Normalize records to selection
+        accounts.forEach(acc => {
+          acc.Priority = acc.Priority || 'Blank';
+          acc['New Territory'] = acc['Current Territory'];
+          acc.Reassigned = false;
+          acc.Segment = sel.segment;
+          if (sel.forceRegion){ acc.Region = sel.forceRegion; }
+          else if (!hasRegionColumn){
+            if (this.config.constrainedStates.West.includes(acc.State)) acc.Region = 'West';
+            else if (this.config.constrainedStates.East.includes(acc.State)) acc.Region = 'East';
+          }
+        });
+
+        // Weighted distribution
+        const norm = this._normalizeFields(accounts, ['PDS','Revenue','Intent Score']);
+        const accountWeight = (a)=> (
+          (this.weights.count || 0) * 1
+          + (this.weights.pds    || 0) * norm(a,'PDS')
+          + (this.weights.rev    || 0) * norm(a,'Revenue')
+          + (this.weights.intent || 0) * norm(a,'Intent Score')
+        );
+
+        const territories = sel.territories.slice();
+        const loads = Object.fromEntries(territories.map(t=>[t,0]));
+
+        // Assign per priority (numeric first, blanks last)
+        const prioRank = (p)=> (p==='Blank'? Number.POSITIVE_INFINITY : (isNaN(Number(p))? 9999 : Number(p)));
+        const grouped = {};
+        accounts.forEach(a => { (grouped[a.Priority] = grouped[a.Priority] || []).push(a); });
+        const prios = Object.keys(grouped).sort((a,b)=> prioRank(a)-prioRank(b));
+
+        prios.forEach(p=>{
+          const group = grouped[p];
+          // Sort accounts by descending weight for better packing
+          group.sort((a,b)=> accountWeight(b) - accountWeight(a));
+          group.forEach(a=>{
+            // pick territory with lowest current load
+            let target = territories[0], minLoad = loads[target];
+            for (const t of territories){ if (loads[t] < minLoad){ minLoad = loads[t]; target = t; } }
+            if (a['New Territory'] !== target){ a['New Territory'] = target; a.Reassigned = true; }
+            loads[target] += accountWeight(a);
+          });
+        });
+
+        return accounts;
+      }
+
+      // ---------- Results ----------
+      _displayResults(){
+        const total = this.rebalancedAccounts.length;
+        const reassigned = this.rebalancedAccounts.filter(a=>a.Reassigned).length;
+        this.ui.totalAccountsCount.textContent = total;
+        this.ui.reassignedAccountsCount.textContent = reassigned;
+        this.ui.percentageReassigned.textContent = total ? `${((reassigned/total)*100).toFixed(1)}%` : '0%';
+        this._displayTerritoryDetails();
+        this._populateChartTerritorySelect();
+        this._handleInsightTypeChange();
+        this._renderChart();
+        this.ui.resultsContainer.classList.remove('hidden');
+      }
+
+      _displayTerritoryDetails(){
+        const territoryNames = [
+          ...this.config.enterpriseTerritories.East, ...this.config.enterpriseTerritories.West,
+          ...this.config.midMarketTerritories.East, ...this.config.midMarketTerritories.West
+        ].sort();
+
+        let html='';
+        const getStats = (accs)=>{
+          if (!accs.length) return {count:0, priorities:{}, industries:{}, states:{}, avgPds:0, avgIntent:0};
+          const priorities = accs.reduce((p,a)=> (p[a.Priority]=(p[a.Priority]||0)+1, p),{});
+          const industries = accs.reduce((p,a)=> (p[a.Industry]=(p[a.Industry]||0)+1, p),{});
+          const states = accs.reduce((p,a)=> (p[a.State]=(p[a.State]||0)+1, p),{});
+          const avgPds = accs.reduce((s,a)=>s+(a.PDS||0),0)/accs.length;
+          const avgIntent = accs.reduce((s,a)=>s+(a['Intent Score']||0),0)/accs.length;
+          return {count:accs.length, priorities, industries, states, avgPds, avgIntent};
+        };
+        const sortByCount = (d)=> Object.entries(d).sort((a,b)=> b[1]-a[1]).map(([k,v])=>`${k}: ${v}`).join('\n');
+        const sortPriorities = (d)=> Object.entries(d).sort(([ka],[kb])=>{
+          if (ka==='Blank') return 1; if (kb==='Blank') return -1;
+          return Number(ka)-Number(kb);
+        }).map(([k,v])=>`${k}: ${v}`).join('\n');
+
+        territoryNames.forEach(name => {
+          const prevAcc = this.originalAccounts.filter(a=>a['Current Territory']===name);
+          const newAcc = this.rebalancedAccounts.filter(a=>a['New Territory']===name);
+          if (!prevAcc.length && !newAcc.length) return;
+          const prevStats = getStats(prevAcc);
+          const newStats = getStats(newAcc);
+
+          html += `
+            <tr>
+              <td class="px-6 py-4 whitespace-nowrap font-semibold">${name}</td>
+              <td class="px-6 py-4 whitespace-nowrap"><span class="text-gray-500">${prevStats.count}</span> &rarr; <span class="font-bold">${newStats.count}</span></td>
+              <td class="px-6 py-4 whitespace-pre-wrap text-xs"><details><summary class="cursor-pointer"> ${Object.keys(newStats.priorities).length} Levels</summary><div class="mt-1">${sortPriorities(newStats.priorities) || 'N/A'}</div></details></td>
+              <td class="px-6 py-4 whitespace-pre-wrap text-xs"><details><summary class="cursor-pointer"> ${Object.keys(newStats.industries).length} Industries</summary><div class="mt-1">${sortByCount(newStats.industries) || 'N/A'}</div></details></td>
+              <td class="px-6 py-4 whitespace-pre-wrap text-xs"><details><summary class="cursor-pointer"> ${Object.keys(newStats.states).length} States</summary><div class="mt-1">${sortByCount(newStats.states) || 'N/A'}</div></details></td>
+              <td class="px-6 py-4 whitespace-nowrap"><span class="text-gray-500">${this._money(prevStats.avgPds)}</span> &rarr; <span class="font-bold">${this._money(newStats.avgPds)}</span></td>
+              <td class="px-6 py-4 whitespace-nowrap"><span class="font-bold">${newStats.avgIntent.toFixed(1)}</span></td>
+            </tr>`;
+        });
+        this.ui.territoryDetailsBody.innerHTML = html;
+      }
+
+      _populateChartTerritorySelect(){
+        const territories = [...new Set(this.rebalancedAccounts.map(a=>a['New Territory']))].filter(Boolean).sort();
+        let html = '<option value="All Territories">All Territories</option>';
+        territories.forEach(t => { html += `<option value="${t}">${t}</option>`; });
+        this.ui.territoryChartSelect.innerHTML = html;
+      }
+
+      // ---------- Charting ----------
+      _barCfg(title, labels, data, options={}){
+        const self = this;
+        return {
+          type:'bar',
+          data:{
+            labels,
+            datasets:[{
+              label:title,
+              data,
+              borderRadius: 6,
+              backgroundColor: (ctx)=>{
+                const idx = ctx.dataIndex % self.palette.length;
+                const color = self.palette[idx];
+                const {ctx:canvasCtx, chartArea} = ctx.chart;
+                if (!chartArea) return color;
+                const grad = canvasCtx.createLinearGradient(0, chartArea.bottom, 0, chartArea.top);
+                grad.addColorStop(0, self._withAlpha(color, 0.4));
+                grad.addColorStop(1, self._withAlpha(color, 0.85));
+                return grad;
+              }
+            }]
+          },
+          options:{
+            responsive:true, maintainAspectRatio:false,
+            plugins:{
+              legend:{display:false},
+              title:{display:true, text:title, color: self._chartText()},
+              tooltip:{
+                callbacks:{
+                  label: (ctx)=>{
+                    const val = ctx.raw ?? 0;
+                    if (options.isCurrency) return ` ${self._money(val)}`;
+                    if (options.asPercent) return ` ${(val*100).toFixed(1)}%`;
+                    return ` ${val}`;
+                  }
+                }
+              }
+            },
+            scales:{
+              x:{ ticks:{ color: self._chartText() }, grid:{ color: self._gridColor() } },
+              y:{ ticks:{ color: self._chartText(), callback: options.isCurrency ? (v)=>'$'+(v/1000).toFixed(0)+'k' : (v)=>v },
+                grid:{ color: self._gridColor() } }
+            },
+            animation: { duration: 600 }
+          }
+        };
+      }
+      _pieCfg(title, labels, data){
+        const colors = labels.map((_,i)=> this.palette[i % this.palette.length]);
+        return {
+          type:'pie',
+          data:{ labels, datasets:[{ data, backgroundColor: colors }]},
+          options:{
+            responsive:true, maintainAspectRatio:false,
+            plugins:{
+              legend:{ position:'top', labels:{ color: this._chartText() }},
+              title:{ display:true, text:title, color: this._chartText() },
+              tooltip:{ callbacks:{ label:(ctx)=>{
+                const total = ctx.dataset.data.reduce((a,b)=>a+b,0);
+                const v = ctx.raw || 0; const pct = total ? (v/total*100).toFixed(1) : 0;
+                return ` ${v} (${pct}%)`;
+              }}}
+            },
+            animation:{ duration: 500 }
+          }
+        };
+      }
+      _chartText(){ return document.documentElement.classList.contains('dark') ? '#E5E7EB' : '#111827'; }
+      _gridColor(){ return document.documentElement.classList.contains('dark') ? 'rgba(148,163,184,0.25)' : 'rgba(0,0,0,0.08)'; }
+      _withAlpha(hex, a){ // simple hex -> rgba
+        const c = hex.replace('#',''); const bigint = parseInt(c,16);
+        const r=(bigint>>16)&255, g=(bigint>>8)&255, b=bigint&255;
+        return `rgba(${r},${g},${b},${a})`;
+      }
+
+      _renderChart(force=false){
+        if (!this.rebalancedAccounts.length) return;
+        if (this.chartInstance){ this.chartInstance.destroy(); this.chartInstance = null; }
+
+        const selected = this.ui.territoryChartSelect.value || 'All Territories';
+        const chartType = this.ui.chartTypeSelect.value;
+        const data = selected === 'All Territories' ? this.rebalancedAccounts : this.rebalancedAccounts.filter(a=>a['New Territory']===selected);
+        if (!data.length) return;
+
+        const groupBy = (arr,key)=> arr.reduce((acc,it)=>{ (acc[it[key]] = acc[it[key]]||[]).push(it); return acc; },{});
+        let cfg;
+        switch(chartType){
+          case 'accountsPerTerritory': {
+            const grouped = groupBy(data,'New Territory');
+            const labels = Object.keys(grouped).sort();
+            const series = labels.map(l=>grouped[l].length);
+            cfg = this._barCfg('Account Count per Territory', labels, series);
+            break;
+          }
+          case 'avgPdsPerTerritory': {
+            const grouped = groupBy(data,'New Territory');
+            const labels = Object.keys(grouped).sort();
+            const series = labels.map(l => { const t = grouped[l]; return t.length ? t.reduce((s,a)=>s+a.PDS,0)/t.length : 0; });
+            cfg = this._barCfg('Average PDS per Territory', labels, series, {isCurrency:true});
+            break;
+          }
+          case 'accountsByRegion': {
+            const grouped = groupBy(data,'Region');
+            const labels = Object.keys(grouped);
+            const series = labels.map(l=>grouped[l].length);
+            cfg = this._pieCfg('Account Distribution by Region', labels, series);
+            break;
+          }
+          case 'accountsBySegment': {
+            const grouped = groupBy(data,'Segment');
+            const labels = Object.keys(grouped);
+            const series = labels.map(l=>grouped[l].length);
+            cfg = this._pieCfg('Account Distribution by Segment', labels, series);
+            break;
+          }
+          case 'priorityDistribution': {
+            const grouped = groupBy(data,'Priority');
+            const labels = Object.keys(grouped).sort((a,b)=>{
+              if (a==='Blank') return 1; if (b==='Blank') return -1;
+              return Number(a) - Number(b);
+            });
+            const series = labels.map(l=>grouped[l].length);
+            cfg = this._barCfg('Priority Distribution', labels, series);
+            break;
+          }
+          case 'industryDistribution': {
+            const grouped = groupBy(data,'Industry');
+            const top10 = Object.entries(grouped).sort((a,b)=> b[1].length - a[1].length).slice(0,10);
+            const labels = top10.map(it=>it[0]);
+            const series = top10.map(it=>it[1].length);
+            cfg = this._barCfg('Top 10 Industries', labels, series);
+            break;
+          }
+          case 'pdsBySegment': {
+            const grouped = groupBy(data,'Segment');
+            const labels = Object.keys(grouped);
+            const series = labels.map(l=> grouped[l].reduce((s,a)=>s+a.PDS,0));
+            cfg = this._barCfg('Total PDS by Segment', labels, series, {isCurrency:true});
+            break;
+          }
+        }
+        if (cfg) this.chartInstance = new Chart(this.ui.chartCanvas.getContext('2d'), cfg);
+      }
+
+      _downloadChartPng(){
+        if (!this.chartInstance) return;
+        const url = this.chartInstance.toBase64Image('image/png', 1.0);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `territory_chart_${new Date().toISOString().slice(0,10)}.png`;
+        a.click();
+      }
+
+      // ---------- Insights ----------
+      _handleInsightTypeChange(){
+        this._populateInsightsTerritorySelect();
+        this.ui.generateInsightsBtn.disabled = true;
+        this.ui.insightsDisplay.classList.add('hidden');
+      }
+      _populateInsightsTerritorySelect(){
+        const insightType = document.querySelector('input[name="insightType"]:checked').value;
+        let territories = new Set();
+        if (insightType === 'new') this.rebalancedAccounts.forEach(a=>territories.add(a['New Territory']));
+        else this.originalAccounts.forEach(a=>territories.add(a['Current Territory']));
+        const sorted = [...territories].filter(Boolean).sort();
+        let html = '<option value="">Select a Territory...</option>';
+        sorted.forEach(t => html += `<option value="${t}">${t}</option>`);
+        this.ui.insightsTerritorySelect.innerHTML = html;
+      }
+
+      async _handleGenerateInsights(){
+        const territory = this.ui.insightsTerritorySelect.value;
+        if (!territory) return;
+        this.ui.insightsLoading.classList.remove('hidden');
+        this.ui.insightsDisplay.classList.add('hidden');
+        this.ui.generateInsightsBtn.disabled = true;
+        try{
+          if (!this.API_KEY || this.API_KEY === 'PASTE_YOUR_GEMINI_API_KEY_HERE') {
+            throw new Error('API key is not set. Please add it to the script before use.');
+          }
+          const insightType = document.querySelector('input[name="insightType"]:checked').value;
+          const prompt = this._buildInsightPrompt(insightType, territory);
+          const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=${this.API_KEY}`;
+          const resp = await fetch(API_URL,{
+            method:'POST', headers:{'Content-Type':'application/json'},
+            body: JSON.stringify({ contents:[{ parts:[{ text: prompt }]}]})
+          });
+          if (!resp.ok){
+            let errTxt = 'API request failed.'; try { const e = await resp.json(); errTxt = e.error?.message || errTxt; } catch {}
+            throw new Error(errTxt);
+          }
+          const result = await resp.json();
+          const insightText = result.candidates?.[0]?.content?.parts?.[0]?.text || 'No insights generated.';
+          this.ui.insightsDisplay.innerHTML = marked.parse(insightText);
+          this.ui.insightsDisplay.classList.remove('hidden');
+        } catch (e){
+          this.ui.insightsDisplay.innerHTML = `<p class="text-red-700 dark:text-red-300"><strong>Error:</strong> ${e.message}</p>`;
+          this.ui.insightsDisplay.classList.remove('hidden');
+          console.error(e);
+        } finally {
+          this.ui.insightsLoading.classList.add('hidden');
+          this.ui.generateInsightsBtn.disabled = false;
+        }
+      }
+
+      _buildInsightPrompt(insightType, territory){
+        const accounts = insightType === 'new'
+          ? this.rebalancedAccounts.filter(a => a['New Territory'] === territory)
+          : this.originalAccounts.filter(a => a['Current Territory'] === territory);
+        if (!accounts.length) return 'No data available for this territory.';
+
+        const sum = (arr, fn) => arr.reduce((s, x) => s + (fn(x) || 0), 0);
+        const by = (key) => accounts.reduce((m, a) => { const k = a[key] || 'Blank'; m[k] = (m[k] || 0) + 1; return m; }, {});
+        
+        const industryCounts = by('Industry');
+        const stateCounts = by('State');
+
+        const territoryData = {
+            totalAccounts: accounts.length,
+            avgPds: accounts.length > 0 ? sum(accounts, a => a.PDS) / accounts.length : 0,
+            avgIntent: accounts.length > 0 ? sum(accounts, a => a['Intent Score']) / accounts.length : 0,
+            avgRevenue: accounts.length > 0 ? sum(accounts, a => a.Revenue) / accounts.length : 0,
+            industryDistribution: Object.entries(industryCounts).map(([name, count]) => ({ name, count, percentage: (count / accounts.length) * 100 })).sort((a, b) => b.count - a.count).slice(0, 10),
+            stateDistribution: Object.entries(stateCounts).map(([name, count]) => ({ name, count, percentage: (count / accounts.length) * 100 })).sort((a, b) => b.count - a.count).slice(0, 10),
+            topAccountsByPDS: [...accounts].sort((a, b) => b.PDS - a.PDS).slice(0, 5).map(a => ({ name: a['Account Name'] || a['Account ID'], pds: a.PDS, intent: a['Intent Score'], industry: a.Industry })),
+            topAccountsByIntent: [...accounts].sort((a, b) => b['Intent Score'] - a['Intent Score']).slice(0, 5).map(a => ({ name: a['Account Name'] || a['Account ID'], pds: a.PDS, intent: a['Intent Score'], industry: a.Industry }))
+        };
+
+        return `You are a world-class Sales Strategist and RevOps Analyst, acting as a co-pilot for a sales representative. Your goal is to provide a comprehensive, actionable, and strategic overview of the sales territory "${territory}". Use the data provided below to generate a detailed report. Be insightful, concise, and use markdown for clear formatting.
+
+**Territory Data Snapshot:**
+\`\`\`json
+${JSON.stringify(territoryData, null, 2)}
+\`\`\`
+
+**Generate a report with the following sections:**
+
+### 1. 📝 Executive Summary
+Provide a high-level paragraph summarizing the territory's health, key characteristics, and primary opportunity.
+
+### 2. 🎯 Ideal Customer Profile (ICP) Analysis
+Based on the data (especially top accounts, high PDS, and high intent), describe the characteristics of the ideal customer in this patch. What industries, revenue bands, and intent levels should the rep focus on?
+
+### 3. 🗺️ Strategic Territory Plan
+Outline a strategic approach for the next quarter. This should include:
+- **Top 3 Priorities:** What are the three most important things the rep should do?
+- **Key Talking Points:** Suggest 2-3 talking points tailored to the dominant industries or customer profiles you've identified.
+- **Vertical-Specific Plays:** Recommend a simple "play" or angle of attack for the top 1-2 industries.
+
+### 4. 🔥 Account Prioritization & Quick Wins
+- **Quick Wins:** List the accounts from the "top accounts" data that seem most ready for engagement and explain why.
+- **Nurture & Develop:** Identify account segments (e.g., "High PDS, Low Intent in the Software industry") that need long-term nurturing.
+
+### 5. ⚠️ Risk Assessment & Mitigation
+- **Risks:** What are the potential risks or weaknesses in this territory? (e.g., over-concentration in one industry, low average intent, many low-priority accounts).
+- **Mitigation:** Suggest 1-2 ways the sales rep can mitigate these risks.`;
+      }
+
+      // ---------- Chat Module ----------
+      _addMessageToChat(role, text) {
+        const bubble = document.createElement('div');
+        bubble.classList.add('chat-bubble', 'prose', 'prose-sm', 'dark:prose-invert', 'max-w-none');
+        bubble.classList.add(role === 'user' ? 'user-bubble' : 'model-bubble');
+        
+        // Sanitize and parse markdown for model responses
+        bubble.innerHTML = (role === 'model') ? marked.parse(text) : text;
+        
+        this.ui.chatDisplay.appendChild(bubble);
+        this.ui.chatDisplay.scrollTop = this.ui.chatDisplay.scrollHeight; // Auto-scroll to bottom
+
+        if (role !== 'system') { // Don't save system messages if any
+            this.chatHistory.push({ role, parts: [{ text }] });
+        }
+      }
+
+      async _handleChatSubmit() {
+        const userInput = this.ui.chatInput.value.trim();
+        if (!userInput) return;
+
+        this._addMessageToChat('user', userInput);
+        this.ui.chatInput.value = '';
+        this.ui.chatSendBtn.disabled = true;
+
+        // Add loading indicator
+        const loadingBubble = document.createElement('div');
+        loadingBubble.className = 'model-bubble chat-bubble animate-pulse';
+        loadingBubble.textContent = '● ● ●';
+        this.ui.chatDisplay.appendChild(loadingBubble);
+        this.ui.chatDisplay.scrollTop = this.ui.chatDisplay.scrollHeight;
+        
+        try {
+          if (!this.API_KEY || this.API_KEY === 'PASTE_YOUR_GEMINI_API_KEY_HERE') {
+            throw new Error('API key is not set. Please add it to the script before use.');
+          }
+          
+          const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=${this.API_KEY}`;
+          const resp = await fetch(API_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ contents: this.chatHistory })
+          });
+
+          this.ui.chatDisplay.removeChild(loadingBubble);
+
+          if (!resp.ok) {
+            let errTxt = 'API request failed.';
+            try { const e = await resp.json(); errTxt = e.error?.message || errTxt; } catch {}
+            throw new Error(errTxt);
+          }
+
+          const result = await resp.json();
+          const modelResponse = result.candidates?.[0]?.content?.parts?.[0]?.text || 'Sorry, I could not generate a response.';
+          this._addMessageToChat('model', modelResponse);
+
+        } catch (e) {
+          this.ui.chatDisplay.removeChild(loadingBubble);
+          this._addMessageToChat('model', `**Error:** ${e.message}`);
+          console.error(e);
+        } finally {
+            this.ui.chatSendBtn.disabled = false;
+        }
+      }
+
+      // ---------- Exports ----------
+      _downloadCSV(){
+        if (!this.rebalancedAccounts.length) return;
+        const colsWanted = [
+          'Account ID', 'Account Name', 'Previous Territory','New Territory','Territory ID','Reassigned','Region','Segment','Priority',
+          'Iterable Sector','ZI Billing State','PDS Live','ZI Revenue','6sense Account Intent Score','ZI Marketing Budget','Z - Emails/Month - eDS API (MM)'
+        ];
+        const dataWithExtras = this.rebalancedAccounts.map(acc => {
+          const prior = this.originalAccounts.find(oa => oa['Account ID']===acc['Account ID']);
+          return { ...acc, 'Previous Territory': prior ? prior['Current Territory'] : '', 'Territory ID': '' };
+        });
+        const reverseMap = Object.entries(this.config.sfColumnMap).reduce((m,[k,v])=> (m[v]=k, m), {});
+        const rows = dataWithExtras.map(acc => {
+          const out = {};
+          for (const key in acc){ if (key === 'Current Territory') continue; out[reverseMap[key] || key] = acc[key]; }
+          return out;
+        });
+        const headers = colsWanted.filter(h => Object.keys(rows[0]).includes(h));
+        const escape = (v)=> { const s = (v===undefined || v===null) ? '' : String(v); return (s.includes('"')||s.includes(',')||s.includes('\n')) ? '"' + s.replace(/"/g,'""') + '"' : s; };
+        const csv = [headers.join(','), ...rows.map(r => headers.map(h=>escape(r[h])).join(','))].join('\n');
+        const blob = new Blob(['\ufeff'+csv], {type:'text/csv;charset=utf-8;'});
+        const link = document.createElement('a'); link.href = URL.createObjectURL(blob);
+        link.setAttribute('download',`rebalanced_territories_${new Date().toISOString().slice(0,10)}.csv`); document.body.appendChild(link); link.click(); document.body.removeChild(link);
+        this._toast('CSV downloaded.', 'success');
+      }
+
+      _downloadXLSX(){
+        if (!this.rebalancedAccounts.length) return;
+        const dataWithExtras = this.rebalancedAccounts.map(acc => {
+          const prior = this.originalAccounts.find(oa => oa['Account ID']===acc['Account ID']);
+          return { ...acc, 'Previous Territory': prior ? prior['Current Territory'] : '', 'Territory ID': '' };
+        });
+        const wb = XLSX.utils.book_new();
+        const ws = XLSX.utils.json_to_sheet(dataWithExtras);
+        XLSX.utils.book_append_sheet(wb, ws, 'Rebalanced');
+        const fname = `rebalanced_territories_${new Date().toISOString().slice(0,10)}.xlsx`;
+        XLSX.writeFile(wb, fname);
+        this._toast('XLSX downloaded.', 'success');
+      }
+
+      // ---------- Run History ----------
+      _saveRunHistory(selection){
+        const summary = this._distributionSummary(this.rebalancedAccounts);
+        const run = {
+          id: 'run_'+Date.now(),
+          date: new Date().toLocaleString(),
+          selection,
+          weights: { ...this.weights },
+          summary
+        };
+        const key = 'revops_runs';
+        const arr = JSON.parse(localStorage.getItem(key) || '[]');
+        arr.unshift(run);
+        localStorage.setItem(key, JSON.stringify(arr.slice(0,20))); // keep last 20
+        this._loadRunHistory();
+      }
+
+      _distributionSummary(data){
+        const counts = data.reduce((m,a)=>{ const t=a['New Territory']; m[t]=(m[t]||0)+1; return m; },{});
+        const total = data.length;
+        return { total, counts };
+      }
+
+      _loadRunHistory(){
+        const key = 'revops_runs';
+        const arr = JSON.parse(localStorage.getItem(key) || '[]');
+        this.ui.runHistorySelect.innerHTML = arr.map(r=> `<option value="${r.id}">${r.date} • ${r.selection}</option>`).join('');
+      }
+
+      _getRunById(id){
+        const arr = JSON.parse(localStorage.getItem('revops_runs') || '[]');
+        return arr.find(r=>r.id===id);
+      }
+
+      _loadSelectedRun(){
+        const id = this.ui.runHistorySelect.value;
+        if (!id) return;
+        const run = this._getRunById(id);
+        if (!run) return;
+        // Just show compare summary text
+        const totals = Object.entries(run.summary.counts).sort((a,b)=> b[1]-a[1]).slice(0,5).map(([t,c])=>`${t}: ${c}`).join(' • ');
+        this.ui.compareResult.textContent = `Loaded summary: total ${run.summary.total}. Top: ${totals}`;
+        this._toast('Run summary loaded. (This does not replace current results.)', 'info');
+      }
+
+      _compareSelectedRun(){
+        const id = this.ui.runHistorySelect.value;
+        if (!id) return;
+        const run = this._getRunById(id);
+        if (!run || !this.rebalancedAccounts.length) return;
+        const current = this._distributionSummary(this.rebalancedAccounts);
+        const deltaTotal = current.total - run.summary.total;
+        const sample = Object.keys({...current.counts, ...run.summary.counts}).slice(0,5).map(name=>{
+          const a = current.counts[name]||0, b = run.summary.counts[name]||0; const d=a-b;
+          return `${name}: ${d>=0?'+':''}${d}`;
+        }).join(' • ');
+        this.ui.compareResult.textContent = `Δ Total: ${deltaTotal>=0?'+':''}${deltaTotal} • ${sample}`;
+        this._toast('Compared current run to selected history.', 'info');
+      }
+
+      // ---------- Utilities ----------
+      _num(x){ return parseFloat(String(x||'0').replace(/[^0-9.-]+/g,'')) || 0; }
+      _money(n){ return '$'+ (n||0).toLocaleString('en-US',{maximumFractionDigits:0}); }
+
+      _toggleLoading(isLoading){
+        this.ui.loadingIndicator.classList.toggle('hidden', !isLoading);
+        this.ui.rebalanceBtn.disabled = isLoading;
+      }
+      _showMessage(message, type='info'){
+        const el = this.ui.messageBox;
+        el.textContent = message;
+        el.className = 'p-4 rounded-md';
+        const map = { error:['bg-red-100','text-red-700','dark:bg-red-900/30','dark:text-red-200'],
+                      success:['bg-green-100','text-green-700','dark:bg-emerald-900/30','dark:text-emerald-200'],
+                      info:['bg-blue-100','text-blue-700','dark:bg-indigo-900/30','dark:text-indigo-200'] };
+        el.classList.add(...(map[type] || map.info));
+        el.classList.remove('hidden');
+      }
+      _hideMessage(){ this.ui.messageBox.classList.add('hidden'); }
+
+      _showMissingHeaders(missing, required){
+        const el = this.ui.missingHeaders;
+        el.innerHTML = `<strong>Missing columns:</strong> ${missing.join(', ')}<br/><span class="text-gray-700 dark:text-slate-300">Required columns:</span> ${required.join(', ')}`;
+        el.classList.remove('hidden');
+      }
+
+      _resetApp(){
+        this.originalAccounts = [];
+        this.rebalancedAccounts = [];
+        this.ui.csvFile.value = '';
+        this.ui.fileName.textContent = '';
+        this.ui.rebalanceBtn.disabled = true;
+        this.ui.resultsContainer.classList.add('hidden');
+        this._hideMessage();
+        this.ui.missingHeaders.classList.add('hidden');
+        this.ui.emptyState.classList.remove('hidden');
+        if (this.chartInstance){ this.chartInstance.destroy(); this.chartInstance = null; }
+        this._toast('Reset complete.', 'info');
+      }
+      _downloadSampleCsv(){
+        const baseHeaders = Object.keys(this.config.sfColumnMap);
+        const headers = ['Account ID','Priority','Region','Segment', ...baseHeaders];
+        const sampleRow = {
+          'Account ID':'001XX000000123',
+          'Account Name': 'Sample Co.',
+          'Priority':'2',
+          'Region':'East',
+          'Segment':'Mid-Market',
+          'Territory':'NOAM Mid-Market East 1',
+          'Iterable Sector':'Software',
+          'ZI Billing State':'NY',
+          'PDS Live':'$150,000',
+          'ZI Revenue':'$50,000,000',
+          '6sense Account Intent Score':'48',
+          'ZI Marketing Budget':'$1,200,000',
+          'Z - Emails/Month - eDS API (MM)':'3.2'
+        };
+        const escape = (v)=> { const s = (v===undefined || v===null) ? '' : String(v); return (s.includes('"')||s.includes(',')||s.includes('\n')) ? '"' + s.replace(/"/g,'""') + '"' : s; };
+        const csv = [headers.join(','), headers.map(h=>escape(sampleRow[h]||'')).join(',')].join('\n');
+        const blob = new Blob(['\ufeff'+csv], {type:'text/csv;charset=utf-8;'});
+        const link = document.createElement('a');
+        link.href = URL.createObjectURL(blob);
+        link.setAttribute('download','territory_balancer_sample.csv');
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        this._toast('Sample CSV downloaded.', 'success');
+      }
+
+      _toast(msg, type='info'){
+        const wrap = document.getElementById('toastContainer');
+        const el = document.createElement('div');
+        const cls = {info:'bg-slate-900 text-white', success:'bg-emerald-600 text-white', error:'bg-red-600 text-white'}[type] || 'bg-slate-900 text-white';
+        el.className = `${cls} px-3 py-2 rounded shadow-lg`;
+        el.textContent = msg;
+        wrap.appendChild(el);
+        setTimeout(()=>{ el.style.opacity='0'; el.style.transition='opacity .5s'; }, 2200);
+        setTimeout(()=> wrap.removeChild(el), 2800);
+      }
+
+      _showSummarySkeleton(show){
+        this.ui.summarySkeleton.style.display = show ? '' : 'none';
+      }
+    }
+
+    document.addEventListener('DOMContentLoaded', ()=> new TerritoryRebalancer());
+  </script>
+</body>
+</html>
